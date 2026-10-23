@@ -1,0 +1,389 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Personal Finance Tracker</title>
+
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='css/style.css') }}"
+  >
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script
+    src="{{ url_for('static', filename='js/script.js') }}"
+    defer
+  ></script>
+</head>
+
+<body>
+  <!-- HEADER -->
+  <header class="topbar">
+    <div>
+      <h1>Finance Tracker</h1>
+      <p>Manage your money, one step at a time.</p>
+    </div>
+    <a class="button" id="exportCsv" href="/api/export/csv">Export CSV</a>
+    <a class="button" id="exportPdf" href="/api/export/pdf">Download PDF</a>
+  </header>
+
+  <main class="container">
+
+    <!-- MONTH FILTER -->
+    <section class="toolbar">
+      <label>
+        Month
+        <input type="month" id="monthFilter">
+      </label>
+    </section>
+
+    <!-- SUMMARY CARDS -->
+    <section class="summary-grid">
+
+      <article class="summary-card">
+        <span>Balance</span>
+        <h2 id="balance">₹0</h2>
+      </article>
+
+      <article class="summary-card">
+        <span>Total Income</span>
+        <h2 id="income">₹0</h2>
+      </article>
+
+      <article class="summary-card">
+        <span>Total Expenses</span>
+        <h2 id="expenses">₹0</h2>
+      </article>
+
+      <article class="summary-card">
+        <span>Savings Rate</span>
+        <h2 id="savingsRate">0%</h2>
+      </article>
+
+    </section>
+
+<!-- MONTH-OVER-MONTH COMPARISON -->
+<section class="panel" id="month-comparison">
+  <h2>Month-over-Month Comparison</h2>
+  <p>
+    Current month:
+    <strong id="comparisonMonth">—</strong>
+    <span>vs</span>
+    Previous month:
+    <strong id="previousMonth">—</strong>
+  </p>
+
+  <div class="comparison-grid">
+    <article class="comparison-item">
+      <span>Income Change</span>
+      <h3 id="incomeChange">N/A</h3>
+      <p>Previous month: <strong id="previousIncome">₹0</strong></p>
+    </article>
+
+    <article class="comparison-item">
+      <span>Expense Change</span>
+      <h3 id="expenseChange">N/A</h3>
+      <p>Previous month: <strong id="previousExpenses">₹0</strong></p>
+    </article>
+
+    <article class="comparison-item">
+      <span>Previous Balance</span>
+      <h3 id="previousBalance">₹0</h3>
+      <p>Current balance: <strong id="comparisonBalance">₹0</strong></p>
+    </article>
+  </div>
+</section>
+
+<!-- FINANCIAL INSIGHTS -->
+<section class="panel" id="financial-insights">
+  <h2>Financial Insights</h2>
+  <p id="financialInsightMessage" aria-live="polite">
+    Loading financial insights...
+  </p>
+  <div class="insight-details">
+    <p>Income: <strong id="insightIncome">₹0</strong></p>
+    <p>Expenses: <strong id="insightExpenses">₹0</strong></p>
+    <p>Net savings: <strong id="insightBalance">₹0</strong></p>
+    <p>Savings rate: <strong id="insightSavingsRate">0%</strong></p>
+  </div>
+</section>
+    <!-- ADD TRANSACTION -->
+    <section class="panel">
+      <h2>Add a transaction</h2>
+
+      <form id="transactionForm">
+        <input type="hidden" id="transactionId">
+
+        <div class="form-grid">
+
+          <label>
+            Title
+            <input
+              id="title"
+              placeholder="e.g. Grocery shopping"
+              required
+            >
+          </label>
+
+          <label>
+            Amount (₹)
+            <input
+              id="amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              required
+            >
+          </label>
+
+          <label>
+            Type
+            <select id="kind">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+          </label>
+
+          <label>
+            Category
+            <select id="category">
+              <option>Food</option>
+              <option>Transport</option>
+              <option>Shopping</option>
+              <option>Bills</option>
+              <option>Rent</option>
+              <option>Health</option>
+              <option>Education</option>
+              <option>Salary</option>
+              <option>Freelance</option>
+              <option>Other</option>
+            </select>
+          </label>
+
+          <label>
+            Date
+            <input id="txDate" type="date" required>
+          </label>
+
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" id="saveButton">
+            Add transaction
+          </button>
+
+          <button
+            type="button"
+            id="cancelEdit"
+            class="secondary"
+            hidden
+          >
+            Cancel edit
+          </button>
+        </div>
+      </form>
+
+      <p id="message" role="status"></p>
+    </section>
+
+<!-- MONTHLY INCOME VS EXPENSES -->
+<section class="panel">
+  <h2>Monthly Income vs Expenses</h2>
+  <p>Compare your income and spending for the selected month.</p>
+
+  <div class="comparison-chart">
+    <canvas id="incomeExpenseChart"></canvas>
+  </div>
+
+  <p id="incomeExpenseEmpty" hidden>
+    No income or expense data available for this month.
+  </p>
+</section>
+
+<!-- SIX MONTH FINANCIAL TREND -->
+<section class="panel" id="monthly-trends-panel">
+  <h2>6-Month Financial Trends</h2>
+  <p>Track income, expenses and savings over the last six months.</p>
+
+  <div class="comparison-chart">
+    <canvas id="monthlyTrendsChart"></canvas>
+  </div>
+
+  <p id="monthlyTrendsMessage" aria-live="polite" hidden></p>
+</section>
+
+
+    <!-- EXPENSE CHART AND MONTHLY BUDGETS -->
+    <section class="two-columns">
+
+      <!-- EXPENSE BREAKDOWN -->
+      <article class="panel">
+        <h2>Expense breakdown</h2>
+
+        <canvas id="expenseChart"></canvas>
+
+        <p id="chartEmpty">
+          Add expense transactions to see your chart.
+        </p>
+      </article>
+
+      <!-- MONTHLY BUDGETS -->
+      <article class="panel">
+        <h2>Monthly budgets</h2>
+
+        <form id="budgetForm">
+
+          <label>
+            Category
+            <select id="budgetCategory">
+              <option>Food</option>
+              <option>Transport</option>
+              <option>Shopping</option>
+              <option>Bills</option>
+              <option>Rent</option>
+              <option>Health</option>
+              <option>Education</option>
+              <option>Other</option>
+            </select>
+          </label>
+
+          <label>
+            Monthly limit (₹)
+            <input
+              id="budgetAmount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              required
+            >
+          </label>
+
+          <button type="submit">Save budget</button>
+
+        </form>
+
+        <div id="budgetList"></div>
+      </article>
+
+    </section>
+
+    <!-- NEW BUDGET ALERTS SECTION -->
+    <section class="panel" id="budget-alerts-section">
+
+      <h2>Budget Alerts</h2>
+
+      <p>
+        Track your spending and get warnings when you approach
+        or exceed a monthly budget.
+      </p>
+
+      <div id="budget-alerts-list" aria-live="polite">
+        Loading budget alerts...
+      </div>
+
+    </section>
+
+<section class="panel" id="budget-comparison-panel">
+  <h2>Monthly Budget vs Actual Spending</h2>
+  <p>Compare category-wise budget limits with your actual expenses.</p>
+
+  <div class="comparison-chart">
+    <canvas id="budgetComparisonChart"></canvas>
+  </div>
+
+  <p id="budgetComparisonEmpty" hidden>
+    Is month ke liye budgets add karo, phir comparison yahan dikhega.
+  </p>
+</section>
+
+
+    <!-- TRANSACTIONS -->
+    <section class="panel">
+
+      <h2>Transactions</h2>
+
+<div class="transaction-toolbar">
+  <p id="transactionCount">Loading transactions...</p>
+
+  <label>
+    Sort by
+    <select id="sortTransactions">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="amount-high">Amount: High to low</option>
+      <option value="amount-low">Amount: Low to high</option>
+      <option value="title">Title: A to Z</option>
+    </select>
+  </label>
+</div>
+
+
+      <!-- TRANSACTION FILTERS -->
+      <div class="filters">
+
+        <input
+          id="search"
+          placeholder="Search by title"
+        >
+
+        <select id="typeFilter">
+          <option value="">All types</option>
+          <option value="income">Income</option>
+          <option value="expense">Expense</option>
+        </select>
+
+        <select id="categoryFilter">
+          <option value="">All categories</option>
+          <option>Food</option>
+          <option>Transport</option>
+          <option>Shopping</option>
+          <option>Bills</option>
+          <option>Rent</option>
+          <option>Health</option>
+          <option>Education</option>
+          <option>Salary</option>
+          <option>Freelance</option>
+          <option>Other</option>
+        </select>
+
+      </div>
+
+      <!-- TRANSACTION TABLE -->
+      <div class="table-wrap">
+
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Title</th>
+              <th>Category</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody id="transactionList"></tbody>
+        </table>
+
+      </div>
+
+      <p id="emptyState">
+        No transactions for this month yet.
+      </p>
+
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer>
+    Personal Finance &amp; Expense Tracker
+  </footer>
+
+</body>
+</html>

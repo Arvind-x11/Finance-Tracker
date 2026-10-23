@@ -1,0 +1,23 @@
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+.env.*
+
+# Local database and backups
+finance.db
+finance.db-*
+finance-backup-*.db
+*.sqlite
+*.sqlite3
+
+# macOS and editor files
+.DS_Store
+.vscode/
+
+# Test and cache files
+.pytest_cache/
+.coverage
+
