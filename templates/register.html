@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create Account | Personal Finance Tracker</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #0f172a;
+    }
+    .card {
+      width: min(92%, 400px);
+      padding: 28px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 10px 35px #0f172a15;
+    }
+    h1 { margin-top: 0; }
+    label { display: block; margin-top: 16px; font-weight: 600; }
+    input {
+      width: 100%;
+      margin-top: 7px;
+      padding: 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      margin-top: 22px;
+      padding: 12px;
+      border: 0;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .error { color: #b91c1c; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Create owner account</h1>
+    <p>Registration is available only while no account exists.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <p class="{{ category }}">{{ message }}</p>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="post" action="{{ url_for('register') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label for="username">Username</label>
+      <input id="username" name="username" required minlength="3"
+             maxlength="80" autocomplete="username">
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required
+             minlength="12" autocomplete="new-password">
+
+      <p>Use at least 12 characters for your password.</p>
+
+      <label for="confirm_password">Confirm password</label>
+      <input id="confirm_password" name="confirm_password" type="password"
+             required minlength="12" autocomplete="new-password">
+
+      <button type="submit">Create account</button>
+    </form>
+
+    <p><a href="{{ url_for('login') }}">Back to login</a></p>
+  </main>
+</body>
+</html>

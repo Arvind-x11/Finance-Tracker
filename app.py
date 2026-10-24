@@ -1,4 +1,6 @@
-
+from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import csv
 import io
 import sqlite3
@@ -9,8 +11,46 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from flask import Flask, jsonify, render_template, request, Response
-
+import os
+import secrets
+from functools import wraps
+from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask import (
+    Flask,
+    jsonify,
+    render_template,
+    request,
+    Response,
+    redirect,
+    url_for,
+    session,
+    flash,
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY")
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False,  # Local HTTP development only
+    PERMANENT_SESSION_LIFETIME=1800,
+)
+
+if not app.config.get("SECRET_KEY"):
+    raise RuntimeError(
+        "FLASK_SECRET_KEY is missing. Set it before starting the app."
+    )
+
+csrf = CSRFProtect(app)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[]
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "finance.db"
@@ -42,6 +82,14 @@ def init_db():
                 category TEXT NOT NULL,
                 txn_date TEXT,
                 notes TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -185,6 +233,121 @@ def valid_month(value):
 
 def current_month():
     return date.today().strftime("%Y-%m")
+
+
+@app.route("/register", methods=["GET", "POST"])
+@limiter.limit("3 per hour", methods=["POST"])
+def register():
+    # Allow registration only when the first account does not exist.
+    with get_db() as conn:
+        user_count = conn.execute(
+            "SELECT COUNT(*) FROM users"
+        ).fetchone()[0]
+
+    if user_count > 0:
+        flash("An account already exists. Please log in.", "error")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not username or len(username) > 50:
+            flash("Username must be between 1 and 50 characters.", "error")
+            return render_template("register.html"), 400
+
+        if len(password) < 12:
+            flash("Password must be at least 12 characters long.", "error")
+            return render_template("register.html"), 400
+
+        if password != confirm_password:
+            flash("Passwords do not match.", "error")
+            return render_template("register.html"), 400
+
+        try:
+            with get_db() as conn:
+                # Recheck inside the write transaction to prevent two
+                # simultaneous registrations from creating separate accounts.
+                conn.execute("BEGIN IMMEDIATE")
+                user_count = conn.execute(
+                    "SELECT COUNT(*) FROM users"
+                ).fetchone()[0]
+
+                if user_count > 0:
+                    conn.rollback()
+                    flash("An account already exists. Please log in.", "error")
+                    return redirect(url_for("login"))
+
+                conn.execute(
+                    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                    (username, generate_password_hash(password))
+                )
+
+            flash("Account created successfully. Please log in.", "success")
+            return redirect(url_for("login"))
+
+        except sqlite3.IntegrityError:
+            flash("Could not create this account. Try another username.", "error")
+            return render_template("register.html"), 400
+
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        with get_db() as conn:
+            user = conn.execute(
+                "SELECT id, username, password_hash FROM users WHERE username = ?",
+                (username,)
+            ).fetchone()
+
+        if user and check_password_hash(user["password_hash"], password):
+            session.clear()
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session.permanent = True
+            return redirect(url_for("index"))
+
+        flash("Invalid username or password.", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("login"))
+
+
+@app.before_request
+def require_login():
+    # Public pages and static assets
+    public_endpoints = {"login", "register", "static"}
+
+    if request.endpoint in public_endpoints:
+        return None
+
+    # Allow logout only for authenticated users; it is POST-only.
+    if request.endpoint == "logout":
+        if session.get("user_id"):
+            return None
+        return redirect(url_for("login"))
+
+    # Protect dashboard and every other route, including /api/*.
+    if not session.get("user_id"):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Authentication required. Please log in."}), 401
+
+        return redirect(url_for("login"))
+
+    return None
 
 
 @app.route("/")
@@ -836,19 +999,80 @@ def budget_alerts():
         "alerts": alerts
     })
 
+from datetime import date, timedelta
+from flask import jsonify
+import sqlite3
+
+@app.route("/api/month-comparison")
+def month_comparison():
+    today = date.today()
+    current_start = today.replace(day=1)
+    previous_end = current_start - timedelta(days=1)
+    previous_start = previous_end.replace(day=1)
+
+    def get_totals(start, end):
+        conn = sqlite3.connect("finance.db")
+        conn.row_factory = sqlite3.Row
+
+        rows = conn.execute("""
+            SELECT kind, COALESCE(SUM(amount), 0) AS total
+            FROM transactions
+            WHERE txn_date >= ? AND txn_date < ?
+            GROUP BY kind
+        """, (start.isoformat(), end.isoformat())).fetchall()
+
+        conn.close()
+        totals = {"income": 0, "expenses": 0}
+
+        for row in rows:
+            if row["kind"] == "income":
+                totals["income"] = row["total"]
+            elif row["kind"] == "expense":
+                totals["expenses"] = row["total"]
+
+        totals["savings"] = totals["income"] - totals["expenses"]
+        return totals
+
+    current = get_totals(current_start, today + timedelta(days=1))
+    previous = get_totals(previous_start, current_start)
+
+    def change(key):
+        old = previous[key]
+        new = current[key]
+
+        if old == 0:
+            return None if new != 0 else 0
+
+        return round(((new - old) / abs(old)) * 100, 2)
+
+    return jsonify({
+        "current_month": current_start.strftime("%B %Y"),
+        "previous_month": previous_start.strftime("%B %Y"),
+        "current": current,
+        "previous": previous,
+        "change_percent": {
+            key: change(key)
+            for key in ("income", "expenses", "savings")
+        }
+    })
 
 if __name__ == "__main__":
     init_db()
 
-    # Automatically apply recurring transactions for the current month.
-    with app.test_client() as client:
-        response = client.post(
-            "/api/recurring/apply",
-            json={"month": current_month()}
-        )
+    # Apply recurring transactions directly at startup.
+    # Calling the view directly avoids an unauthenticated HTTP request.
+    with app.test_request_context(
+        "/api/recurring/apply",
+        method="POST",
+        json={"month": current_month()}
+    ):
+        response = apply_recurring()
         if response.status_code == 200:
             print("Monthly recurring transactions:", response.get_json())
         else:
-            print("Recurring transaction error:", response.get_data(as_text=True))
+            print(
+                "Recurring transaction error:",
+                response.get_data(as_text=True)
+            )
 
     app.run(debug=True, host="127.0.0.1", port=5001)

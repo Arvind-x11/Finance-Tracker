@@ -20,24 +20,47 @@ let budgetComparisonChart = null;
 let monthlyTrendsChart = null;
 let currentTransactions = [];
 
+
 async function api(url, options = {}) {
+  const csrfToken = document
+    .querySelector('meta[name="csrf-token"]')
+    ?.getAttribute("content");
+
+  const method = (options.method || "GET").toUpperCase();
+
+  const headers = {
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
+    ...options.headers
+  };
+
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    if (!csrfToken) {
+      throw new Error("CSRF token missing. Refresh the page and try again.");
+    }
+    headers["X-CSRFToken"] = csrfToken;
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers
-    }
+    method,
+    headers,
+    credentials: "same-origin"
   });
 
-  const data = await response.json();
+  const contentType = response.headers.get("content-type") || "";
+  const data = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
 
   if (!response.ok) {
-    throw new Error(data.error || "Request failed.");
+    const message = typeof data === "object" && data !== null
+      ? data.error || data.message
+      : null;
+    throw new Error(message || `Request failed (${response.status}).`);
   }
 
   return data;
 }
-
 function showMessage(message, isError = false) {
   $("message").textContent = message;
   $("message").style.color = isError ? "#b91c1c" : "#15803d";
@@ -64,7 +87,6 @@ function updateExportLinks() {
 async function loadSummary() {
   const data = await api(`/api/summary?month=${encodeURIComponent(selectedMonth())}`);
   renderFinancialInsights(data);
-  renderMonthComparison(data);
     $("incomeExpenseEmpty").hidden =
     Number(data.income) > 0 || Number(data.expenses) > 0;
 
@@ -224,14 +246,14 @@ function renderFinancialInsights(data) {
 }
 
 
-function renderMonthComparison(data) {
-  $("comparisonMonth").textContent = data.month || "—";
+ function renderMonthComparison(data) {
+  $("comparisonMonth").textContent = data.current_month || "—";
   $("previousMonth").textContent = data.previous_month || "—";
 
-  $("previousIncome").textContent = money(data.previous_income);
-  $("previousExpenses").textContent = money(data.previous_expenses);
-  $("previousBalance").textContent = money(data.previous_balance);
-  $("comparisonBalance").textContent = money(data.balance);
+  $("previousIncome").textContent = money(data.previous.income);
+  $("previousExpenses").textContent = money(data.previous.expenses);
+  $("previousBalance").textContent = money(data.previous.savings);
+  $("comparisonBalance").textContent = money(data.current.savings);
 
   function formatChange(value, kind) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) {
@@ -239,40 +261,31 @@ function renderMonthComparison(data) {
     }
 
     const percent = Number(value);
-    const prefix = percent > 0 ? "+" : "";
-    const suffix = "%";
+    const arrow = percent > 0 ? "↑ " : percent < 0 ? "↓ " : "";
+    const sign = percent > 0 ? "+" : "";
 
-    if (kind === "expense") {
-      if (percent > 0) return `↑ ${prefix}${percent.toFixed(2)}%`;
-      if (percent < 0) return `↓ ${percent.toFixed(2)}%`;
-      return "0.00%";
-    }
-
-    if (percent > 0) return `↑ ${prefix}${percent.toFixed(2)}%`;
-    if (percent < 0) return `↓ ${percent.toFixed(2)}%`;
-    return `0.00${suffix}`;
+    return `${arrow}${sign}${percent.toFixed(2)}%`;
   }
 
   const incomeChange = $("incomeChange");
   const expenseChange = $("expenseChange");
 
-  incomeChange.textContent = formatChange(
-    data.income_change_percent,
-    "income"
-  );
-
-  expenseChange.textContent = formatChange(
-    data.expense_change_percent,
-    "expense"
-  );
+  incomeChange.textContent = formatChange(data.change_percent.income, "income");
+  expenseChange.textContent = formatChange(data.change_percent.expenses, "expense");
 
   incomeChange.style.color =
-    Number(data.income_change_percent) > 0 ? "#15803d" :
-    Number(data.income_change_percent) < 0 ? "#b91c1c" : "";
+    Number(data.change_percent.income) > 0 ? "#15803d" :
+    Number(data.change_percent.income) < 0 ? "#b91c1c" : "";
 
+  // Expenses going down is good; expenses going up is bad.
   expenseChange.style.color =
-    Number(data.expense_change_percent) > 0 ? "#b91c1c" :
-    Number(data.expense_change_percent) < 0 ? "#15803d" : "";
+    Number(data.change_percent.expenses) > 0 ? "#b91c1c" :
+    Number(data.change_percent.expenses) < 0 ? "#15803d" : "";
+}
+
+async function loadMonthComparison() {
+  const data = await api("/api/month-comparison");
+  renderMonthComparison(data);
 }
 
 async function loadTransactions() {
@@ -589,22 +602,21 @@ async function loadMonthlyTrends() {
 }
 
 
-async function refreshDashboard() {
+  async function refreshDashboard() {
   try {
     await Promise.all([
-      loadSummary(),
-      loadTransactions(),
-      loadBudgets(),
-      loadBudgetAlerts(),
-      loadBudgetComparison(),
-      loadMonthlyTrends()
-    ]);
+  loadSummary(),
+  loadMonthComparison(),
+  loadTransactions(),
+  loadBudgets(),
+  loadBudgetAlerts(),
+  loadBudgetComparison(),
+  loadMonthlyTrends()
+]);
   } catch (error) {
     showMessage(error.message, true);
   }
 }
-
-
 $("transactionForm").addEventListener("submit", async (event) => {
   event.preventDefault();
 
